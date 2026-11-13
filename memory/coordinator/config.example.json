@@ -1,0 +1,14 @@
+{
+  "listen_host": "127.0.0.1",
+  "port": 8765,
+  "token_file": "__STATE_DIR__/token",
+  "state_file": "__STATE_DIR__/state.json",
+  "host_pressure_admission_enabled": false,
+  "warning_enabled": false,
+  "max_peak_mib": 2048,
+  "guest_reserve_mib": 512,
+  "max_queue": 32,
+  "lease_timeout_s": 30,
+  "heartbeat_interval_s": 5,
+  "capacity_bypass_enabled": true
+}

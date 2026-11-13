@@ -1,0 +1,77 @@
+#!/bin/sh
+# Install a rendered, root-owned copy. --check performs no import or mounts.
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+LC_ALL=C
+export LC_ALL
+
+ZPOOL='__ABSOLUTE_ZPOOL_PATH__'
+ZFS='__ABSOLUTE_ZFS_PATH__'
+POOL='__ZFS_POOL_NAME__'
+POOL_GUID='__ZFS_POOL_GUID__'
+ROOT_MOUNT='__ABSOLUTE_POOL_MOUNT__'
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    --check|--mount) mode=$1 ;;
+    *) fail 'usage: zfs-pool-ready.sh --check|--mount' ;;
+esac
+[ "$#" -eq 1 ] || fail 'provide exactly one mode'
+if [ "$mode" = --mount ] && [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    fail '--mount requires administrator privileges'
+fi
+
+for path in "$ZPOOL" "$ZFS" "$ROOT_MOUNT"; do
+    case "$path" in
+        /|*[!a-zA-Z0-9_./-]*|*/../*|*/..|*/./*|*/.|*//*|*/) fail 'use absolute paths without whitespace or traversal' ;;
+        /*) ;;
+        *) fail 'render the absolute paths before installing this helper' ;;
+    esac
+done
+case "$POOL" in
+    [a-zA-Z]*) ;;
+    *) fail 'set the expected ZFS pool name' ;;
+esac
+case "$POOL" in *[!a-zA-Z0-9_.:-]*) fail 'invalid pool name' ;; esac
+case "$POOL_GUID" in
+    ''|0|*[!0-9]*) fail 'set the expected decimal ZFS pool GUID' ;;
+esac
+[ -x "$ZPOOL" ] && [ -x "$ZFS" ] || fail 'ZFS executables are unavailable'
+
+if ! "$ZPOOL" list -H -o name "$POOL" >/dev/null 2>&1; then
+    [ "$mode" = --mount ] || fail 'expected pool is not imported'
+    "$ZPOOL" import -N "$POOL_GUID" || fail 'normal pool import failed'
+fi
+[ "$("$ZPOOL" get -H -o value guid "$POOL")" = "$POOL_GUID" ] || fail 'unexpected pool GUID'
+[ "$("$ZFS" get -H -o value mountpoint "$POOL")" = "$ROOT_MOUNT" ] || fail 'unexpected root mountpoint'
+
+datasets=$("$ZFS" list -H -r -t filesystem -o name,mounted,canmount,mountpoint "$POOL") ||
+    fail 'dataset enumeration failed'
+tab=$(printf '\t')
+while IFS="$tab" read -r dataset mounted canmount mountpoint; do
+    [ "$canmount" = on ] || continue
+    case "$mountpoint" in none|legacy) continue ;; esac
+    case "$dataset" in "$POOL"|"$POOL"/*) ;; *) fail 'unexpected dataset' ;; esac
+    case "$mountpoint" in
+        "$ROOT_MOUNT"|"$ROOT_MOUNT"/*) ;;
+        *) fail "automatic dataset mount is outside the expected root: $dataset" ;;
+    esac
+    if [ "$mounted" != yes ]; then
+        [ "$mode" = --mount ] || fail "dataset is not mounted: $dataset"
+        "$ZFS" mount "$dataset" || fail "dataset mount failed: $dataset"
+    fi
+    [ "$("$ZFS" get -H -o value mounted "$dataset")" = yes ] || fail "mount verification failed: $dataset"
+done <<EOF
+$datasets
+EOF
+
+/sbin/mount | /usr/bin/awk -v path="$ROOT_MOUNT" '
+    $2 == "on" && $3 == path && $4 ~ /^\(zfs[,)]/ { found=1 }
+    END { exit !found }
+' || fail 'expected root path is not a mounted ZFS filesystem'
+printf '%s\n' 'Expected pool and automatic datasets are ready.'

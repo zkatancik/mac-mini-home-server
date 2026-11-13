@@ -1,0 +1,66 @@
+# Adapt to the service names, volumes and network in your base Compose project.
+services:
+  nextcloud:
+    volumes:
+      - type: bind
+        source: ${NEXTCLOUD_MEMORY_EXAMPLE_DIR:?Set the directory containing the memory examples}/apache-memory.conf
+        target: /etc/apache2/conf-enabled/zz-worker-budget.conf
+        read_only: true
+        bind:
+          create_host_path: false
+
+  nextcloud-cron:
+    image: ${NEXTCLOUD_CRON_IMAGE:?Set your PHP and Python-capable Nextcloud image}
+    init: true
+    user: www-data
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+    command: []
+    entrypoint:
+      - /usr/bin/python3
+      - /opt/admission/cron-loop.py
+      - --run
+      - --client
+      - /opt/admission/client.py
+      - --url
+      - ${MEMORY_COORDINATOR_URL:?Set the private coordinator endpoint visible to the cron container}
+      - --token-file
+      - /run/secrets/admission-token
+      - --receipt-file
+      - /var/lib/admission/nextcloud-cron.json
+      - --cron-file
+      - /var/www/html/cron.php
+      - --peak-mib
+      - ${NEXTCLOUD_CRON_PEAK_MIB:?Set a measured peak in MiB}
+      - --run-timeout
+      - ${NEXTCLOUD_CRON_RUN_SECONDS:?Set the run deadline in seconds}
+      - --wait-timeout
+      - ${NEXTCLOUD_CRON_QUEUE_SECONDS:?Set the queue deadline in seconds}
+      - --interval
+      - ${NEXTCLOUD_CRON_INTERVAL_SECONDS:?Set the time between attempts in seconds}
+    volumes:
+      - type: bind
+        source: ${NEXTCLOUD_MEMORY_EXAMPLE_DIR:?Set the directory containing the memory examples}/cron-loop.py
+        target: /opt/admission/cron-loop.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEMORY_COORDINATOR_CLIENT_FILE:?Set the reviewed local client file}
+        target: /opt/admission/client.py
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEMORY_COORDINATOR_TOKEN_FILE:?Set the private local token file}
+        target: /run/secrets/admission-token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${NEXTCLOUD_CRON_RECEIPT_DIR:?Set an existing private writable directory}
+        target: /var/lib/admission
+        bind:
+          create_host_path: false
+    # Add the same Nextcloud application/config/data mounts and private network
+    # as your existing cron service. Add startup dependencies as appropriate.
